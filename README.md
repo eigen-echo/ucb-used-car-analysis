@@ -3,4 +3,4 @@ Exploring valuation of used cars
 
 ## Getting Started
 
-**[Setup Instructions](docs/SETUP.md)** - Complete installation and environment setup guide
+**[Setup Instructions](docs/setup.md)** - Complete installation and environment setup guide
