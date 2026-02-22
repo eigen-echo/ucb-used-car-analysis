@@ -2,9 +2,10 @@
 """
 VIN Enrichment Script
 Reads vehicles.csv, decodes VINs using the vPIC API, and updates vehicle information.
+Only processes rows where make, model, or year is missing.
 """
 
-import csv
+import pandas as pd
 import requests
 import sys
 from typing import Optional, Dict
@@ -14,9 +15,8 @@ import time
 
 # Configuration
 API_URL = "http://localhost:8000"
-INPUT_CSV = "../../data/vehicles.csv"
-OUTPUT_CSV = "../../data/vehicles_enriched.csv"
-BATCH_SIZE = 100  # Process in batches
+INPUT_CSV = "data/vehicles.csv"
+OUTPUT_CSV = "data/vehicles_enriched.csv"
 RATE_LIMIT_DELAY = 0.1  # Seconds between API calls
 
 
@@ -30,7 +30,7 @@ def decode_vin(vin: str) -> Optional[Dict[str, str]]:
     Returns:
         Dictionary with make, model, and year, or None if failed
     """
-    if not vin or len(vin) != 17:
+    if not vin or len(str(vin)) != 17:
         return None
 
     try:
@@ -64,7 +64,7 @@ def decode_vin(vin: str) -> Optional[Dict[str, str]]:
         if result['make'] or result['model'] or result['year']:
             return result
 
-        print(f"  ✗ No data found for {vin}", file=sys.stderr)
+        print(f"  ⚠ No data found for {vin}", file=sys.stderr)
         return None
 
     except requests.exceptions.RequestException as e:
@@ -75,9 +75,26 @@ def decode_vin(vin: str) -> Optional[Dict[str, str]]:
         return None
 
 
+def is_missing_data(row: pd.Series) -> bool:
+    """
+    Check if a row is missing year, manufacturer, or model data.
+
+    Args:
+        row: DataFrame row
+
+    Returns:
+        True if any of the fields is missing
+    """
+    return (
+        pd.isna(row.get('year')) or str(row.get('year', '')).strip() == '' or
+        pd.isna(row.get('manufacturer')) or str(row.get('manufacturer', '')).strip() == '' or
+        pd.isna(row.get('model')) or str(row.get('model', '')).strip() == ''
+    )
+
+
 def enrich_vehicles(input_file: str, output_file: str, max_rows: Optional[int] = None):
     """
-    Read vehicles CSV, decode VINs, and write enriched data.
+    Read vehicles CSV, decode VINs with missing data, and write enriched data.
 
     Args:
         input_file: Path to input CSV
@@ -95,90 +112,106 @@ def enrich_vehicles(input_file: str, output_file: str, max_rows: Optional[int] =
     print(f"📝 Writing to: {output_path}")
     print()
 
+    # Read CSV into DataFrame
+    print("⏳ Loading CSV into DataFrame...")
+    df = pd.read_csv(input_path, dtype=str, low_memory=False)
+
+    if max_rows:
+        df = df.head(max_rows)
+        print(f"⚠ Limited to first {max_rows} rows")
+
+    total_rows = len(df)
+    print(f"✓ Loaded {total_rows:,} rows")
+    print()
+
+    # Check for VIN column
+    if 'VIN' not in df.columns:
+        print("✗ VIN column not found in CSV")
+        sys.exit(1)
+
+    # Find rows that need enrichment (have VIN but missing data)
+    df['_has_valid_vin'] = df['VIN'].apply(lambda x: pd.notna(x) and len(str(x).strip()) == 17)
+    df['_needs_enrichment'] = df.apply(lambda row: row['_has_valid_vin'] and is_missing_data(row), axis=1)
+
+    rows_to_process = df[df['_needs_enrichment']].copy()
+    rows_with_vin = df['_has_valid_vin'].sum()
+    rows_needing_enrichment = len(rows_to_process)
+
+    print("📊 Data Analysis:")
+    print(f"  Total rows:                {total_rows:,}")
+    print(f"  Rows with valid VIN:       {rows_with_vin:,}")
+    print(f"  Rows needing enrichment:   {rows_needing_enrichment:,}")
+    print(f"  Rows to skip (complete):   {rows_with_vin - rows_needing_enrichment:,}")
+    print()
+
+    if rows_needing_enrichment == 0:
+        print("✓ No rows need enrichment. All data is complete!")
+        # Still save the output
+        df.drop(columns=['_has_valid_vin', '_needs_enrichment'], inplace=True)
+        df.to_csv(output_path, index=False)
+        print(f"✓ Output saved to: {output_path}")
+        return
+
     # Statistics
-    total_rows = 0
-    rows_with_vin = 0
     successful_decodes = 0
     failed_decodes = 0
-    skipped_rows = 0
+    processed = 0
 
-    with open(input_path, 'r', encoding='utf-8') as infile, \
-         open(output_path, 'w', encoding='utf-8', newline='') as outfile:
+    print("🔄 Processing VINs with missing data...")
+    print()
 
-        reader = csv.DictReader(infile)
+    # Process each row that needs enrichment
+    for idx, row in rows_to_process.iterrows():
+        vin = str(row['VIN']).strip()
+        processed += 1
 
-        # Ensure output has the same fields
-        fieldnames = reader.fieldnames
-        writer = csv.DictWriter(outfile, fieldnames=fieldnames)
-        writer.writeheader()
+        # Progress indicator
+        if processed % 10 == 0:
+            print(f"⏳ Processed {processed}/{rows_needing_enrichment} VINs ({successful_decodes} successful, {failed_decodes} failed)...")
 
-        # Find the VIN column index
-        if 'VIN' not in fieldnames:
-            print("✗ VIN column not found in CSV")
-            sys.exit(1)
+        # Decode VIN
+        decoded = decode_vin(vin)
 
-        # Process rows
-        for row in reader:
-            total_rows += 1
+        if decoded:
+            # Update only missing fields
+            if pd.isna(row['year']) or str(row['year']).strip() == '':
+                df.at[idx, 'year'] = decoded['year']
+            if pd.isna(row['manufacturer']) or str(row['manufacturer']).strip() == '':
+                df.at[idx, 'manufacturer'] = decoded['make']
+            if pd.isna(row['model']) or str(row['model']).strip() == '':
+                df.at[idx, 'model'] = decoded['model']
 
-            # Check if we've hit the max rows limit
-            if max_rows and total_rows > max_rows:
-                print(f"\n⚠ Reached max_rows limit ({max_rows}), stopping...")
-                break
+            successful_decodes += 1
+            print(f"  ✓ {vin}: {decoded['year']} {decoded['make']} {decoded['model']}")
+        else:
+            failed_decodes += 1
 
-            vin = row.get('VIN', '').strip()
+        # Rate limiting
+        time.sleep(RATE_LIMIT_DELAY)
 
-            # Skip if no VIN
-            if not vin or len(vin) != 17:
-                writer.writerow(row)
-                skipped_rows += 1
-                continue
+    # Remove helper columns
+    df.drop(columns=['_has_valid_vin', '_needs_enrichment'], inplace=True)
 
-            rows_with_vin += 1
-
-            # Progress indicator
-            if rows_with_vin % 10 == 0:
-                print(f"⏳ Processed {rows_with_vin} VINs ({successful_decodes} successful, {failed_decodes} failed)...")
-
-            # Decode VIN
-            decoded = decode_vin(vin)
-
-            if decoded:
-                # Update row with decoded data
-                # Only update if the field is empty or we want to override
-                if not row.get('year') or row['year'].strip() == '':
-                    row['year'] = decoded['year']
-                if not row.get('manufacturer') or row['manufacturer'].strip() == '':
-                    row['manufacturer'] = decoded['make']
-                if not row.get('model') or row['model'].strip() == '':
-                    row['model'] = decoded['model']
-
-                successful_decodes += 1
-                print(f"  ✓ {vin}: {decoded['year']} {decoded['make']} {decoded['model']}")
-            else:
-                failed_decodes += 1
-
-            # Write the row (updated or original)
-            writer.writerow(row)
-
-            # Rate limiting
-            time.sleep(RATE_LIMIT_DELAY)
+    # Save enriched DataFrame
+    print()
+    print("💾 Saving enriched data...")
+    df.to_csv(output_path, index=False)
 
     # Final statistics
     print()
     print("=" * 60)
     print("📊 Enrichment Complete!")
     print("=" * 60)
-    print(f"Total rows processed:    {total_rows:,}")
-    print(f"Rows with VIN:           {rows_with_vin:,}")
-    print(f"Successful decodes:      {successful_decodes:,}")
-    print(f"Failed decodes:          {failed_decodes:,}")
-    print(f"Rows skipped (no VIN):   {skipped_rows:,}")
+    print(f"Total rows:                  {total_rows:,}")
+    print(f"Rows with VIN:               {rows_with_vin:,}")
+    print(f"Rows needing enrichment:     {rows_needing_enrichment:,}")
+    print(f"Successful decodes:          {successful_decodes:,}")
+    print(f"Failed decodes:              {failed_decodes:,}")
     print()
     print(f"✓ Output saved to: {output_path}")
 
-    if successful_decodes > 0:
-        success_rate = (successful_decodes / rows_with_vin * 100) if rows_with_vin > 0 else 0
+    if successful_decodes > 0 and rows_needing_enrichment > 0:
+        success_rate = (successful_decodes / rows_needing_enrichment * 100)
         print(f"✓ Success rate: {success_rate:.1f}%")
 
 
@@ -189,7 +222,7 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Enrich vehicles.csv with VIN decode data from vPIC API"
+        description="Enrich vehicles.csv with VIN decode data from vPIC API (only for rows with missing data)"
     )
     parser.add_argument(
         '-i', '--input',

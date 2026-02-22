@@ -131,19 +131,19 @@ def enrich_vehicles(
 
     # --------------------------------------------------------- identify work
     df["_valid_vin"]    = df["VIN"].apply(lambda x: pd.notna(x) and len(str(x).strip()) == 17)
-    df["_needs_enrich"] = df.apply(
-        lambda r: bool(r["_valid_vin"]) and is_missing_core_data(r), axis=1
-    )
+    # Decode all rows with a valid VIN so base_price / transmission_style are
+    # always written, not only rows that are missing make/model/year.
+    df["_needs_enrich"] = df["_valid_vin"]
 
     to_enrich = df[df["_needs_enrich"]]
     unique_vins = list({str(r).strip() for r in to_enrich["VIN"]})
 
     print(f"Rows total:          {total_rows:,}")
-    print(f"Rows to enrich:      {len(to_enrich):,}")
+    print(f"Rows with valid VIN: {len(to_enrich):,}")
     print(f"Unique VINs:         {len(unique_vins):,}")
 
     if not unique_vins:
-        print("Nothing to enrich. All rows have make/model/year populated.")
+        print("Nothing to enrich. No valid VINs found.")
         df.drop(columns=["_valid_vin", "_needs_enrich"]).to_csv(output_path, index=False)
         print(f"Output saved to: {output_path}")
         return
@@ -208,6 +208,7 @@ def enrich_vehicles(
     print("Enrichment complete")
     print("=" * 55)
     print(f"Total rows:          {total_rows:,}")
+    print(f"Rows with valid VIN: {len(to_enrich):,}")
     print(f"Rows enriched:       {successful:,}")
     print(f"Output:              {output_path}")
     if len(to_enrich) > 0:
