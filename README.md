@@ -20,7 +20,7 @@ The short version: I tried four different model types before settling on plain L
 
 **Linear Regression** was the starting point — no regularization, all features, straightforward. It actually performed the best in terms of raw error (~$4,100 MAE), which was a bit surprising. It does occasionally produce weird edge-case predictions on unusual vehicles, but on average it holds up well.
 
-**Ridge Regression** was the next step, adding L2 regularization to penalize large coefficients. I also paired it with Sequential Feature Selection to trim down the feature set. The idea was that removing noise would improve accuracy — it didn't, quite. Ridge came in around $4,500 MAE, slightly worse than vanilla LR. It was more stable with rare manufacturer categories and less prone to blowing up on edge cases, but the accuracy tradeoff wasn't worth it for the main use case.
+**Ridge Regression** was the next step, adding L2 regularization to penalize large coefficients. I also paired it with Sequential Feature Selection to trim down the feature set. The idea was that removing noise would improve accuracy, but it did not do that to the extent I expected. Ridge came in around $4,500 MAE, slightly worse than plain LR. It was more stable with rare manufacturer categories and less prone to blowing up on edge cases, but the accuracy tradeoff wasn't worth it for the main use case.
 
 **Lasso Regression** takes the regularization further - it actually zeros out coefficients it doesn't need, which makes the model smaller and more interpretable. That's useful if you want to understand *which* features matter most. But again, the error went up (~$4,900 MAE). Lasso's strength is explanation, not raw prediction accuracy for this dataset.
 
@@ -77,6 +77,7 @@ As part of the data enrichment phase, I built a local VIN decoding service backe
 
 See [`services/vin-api/README.md`](services/vin-api/README.md) for setup and usage details.
 
+Source: [NHTSA Product Information Catalog and Vehicle Listing](https://vpic.nhtsa.dot.gov/downloads/)
 ---
 
 ## Project Structure
@@ -86,29 +87,18 @@ ucb-used-car-analysis/
 ├── notebooks/
 │   └── 00 data analysis and model selection.ipynb   # Main analysis notebook
 ├── data/
-│   ├── vehicles.csv                                  # Raw Craigslist dataset
+│   ├── vehicles.csv                                 # Raw kaggle dataset
 │   └── vehicles_enriched.csv                        # After VIN enrichment attempt
-├── images/
+├── images/                                          # folder to store all images from analysis
 │   ├── avg_price_by_state.html                      # Interactive choropleth — avg price by state
-│   ├── price_distribution.html                      # Price histogram
-│   ├── odometer_vs_price.html                       # Mileage vs price
-│   ├── year_vs_price.html                           # Year vs price
-│   ├── condition_vs_price.html                      # Condition breakdown
-│   ├── price_vs_title_status.html                   # Title status effect on price
-│   ├── feature_importance_from_coeffs.html          # Coefficient importance chart
-│   ├── lr_actual_vs_predicted.html                  # Linear Regression results
-│   ├── ridge_sfs_actual_vs_predicted.html           # Ridge model results
-│   └── lasso_sfs_actual_vs_predicted.html           # Lasso model results
 ├── services/
 │   └── vin-api/                                     # NHTSA VIN decoder (Docker + FastAPI)
 │       ├── app/                                     # FastAPI application
 │       ├── docker-compose.yml
-│       ├── enrich_vehicles_pg.py                       # Batch enrichment script, direct to pg sql
+│       ├── enrich_vehicles_pg.py                    # Batch enrichment script, direct to pg sql
 │       └── README.md
 ├── docs/
 │   ├── setup.md                                     # Environment setup guide
-│   ├── VIN_ENRICHMENT_GUIDE.md
-│   └── ENRICH_VEHICLES_SUMMARY.md
 └── src/
     └── setup.py
 ```
