@@ -1,0 +1,33 @@
+# Environment variables
+.env
+
+# Database backups
+backups/
+*.zip
+*.custom
+*.sql
+*.dump
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
